@@ -245,6 +245,22 @@ double** compute_gaussian_kernel(int size, double sigma) {
     return result;
 }
 
+void free_gaussian_kernel(double*** gauss_kernel, int height) {
+    for (int i = 0; i < height; i++) {
+        free((*gauss_kernel)[i]);
+    }
+    free(*gauss_kernel);
+    *gauss_kernel = NULL;
+}
+
+void free_image(bmp_image ***image, int height) {
+    for (int i = 0; i < height; i++) {
+        free((*image)[i]);
+    }
+    free(*image);
+    *image = NULL;
+}
+
 // Function to blur the image by applying the gaussian kernel on the image.
 void image_noise_reduction(bmp_image ***physicalImage, bmp_infoheader *infoHeader, 
 	double** gauss_kernel, int k) {
@@ -273,6 +289,7 @@ void image_noise_reduction(bmp_image ***physicalImage, bmp_infoheader *infoHeade
         }
     }
 
+    free_image(physicalImage, infoHeader->height);
     *physicalImage = result;
 }
 
@@ -335,6 +352,7 @@ bmp_image** sobel_filters(bmp_image ***physicalImage, bmp_infoheader *infoHeader
         }
     }
 
+    free_image(physicalImage, infoHeader->height);
     *physicalImage = result;
 
     return theta_img;
@@ -361,21 +379,25 @@ void non_max_suppression(bmp_image ***physicalImage, bmp_image **theta_img,
     }
 
     #pragma omp parallel for
-    for (int i = 0; i < infoHeader->height - 1; i++) {
-        for (int j = 0; j < infoHeader->width - 1; j++) {
+    for (int i = 0; i < infoHeader->height; i++) {
+        for (int j = 0; j < infoHeader->width; j++) {
             double q = 255;
             double r = 255;
 
-            if ((0 <= theta_img[i][j].Blue < 22.5) || (157.5 <= theta_img[i][j].Blue <= 180)) {
+            if (((0 <= theta_img[i][j].Blue < 22.5) || (157.5 <= theta_img[i][j].Blue <= 180))
+                && (j + 1 < infoHeader->width) && (j-1>=0)) {
                 q = img[i][j+1].Blue;
                 r = img[i][j-1].Blue;
-            } else if (22.5 <= theta_img[i][j].Blue < 67.5) {
+            } else if (22.5 <= theta_img[i][j].Blue < 67.5&& (i+1<infoHeader->height) 
+                && (i-1>=0) && (j-1>=0) && (j+1<infoHeader->width)) {
                 q = img[i+1][j-1].Blue;
                 r = img[i-1][j+1].Blue;
-            } else if (67.5 <= theta_img[i][j].Blue < 112.5) {
+            } else if (67.5 <= theta_img[i][j].Blue < 112.5&& (i+1<infoHeader->height) 
+                && (i-1>=0)) {
                 q = img[i+1][j].Blue;
                 r = img[i-1][j].Blue;
-            } else if (112.5 <= theta_img[i][j].Blue < 157.5) {
+            } else if (112.5 <= theta_img[i][j].Blue < 157.5&& (i+1<infoHeader->height) 
+                && (i-1>=0) && (j-1>=0) && (j+1<infoHeader->width)){
                 q = img[i-1][j-1].Blue;
                 r = img[i+1][j+1].Blue;
             }
@@ -393,6 +415,7 @@ void non_max_suppression(bmp_image ***physicalImage, bmp_image **theta_img,
         }
     }
 
+    free_image(physicalImage, infoHeader->height);
     *physicalImage = result;
 }
 
@@ -411,8 +434,8 @@ void double_threshold(bmp_image ***physicalImage, bmp_infoheader *infoHeader,
 	max_pixel.Green = MIN_PIXEL_VALUE;
 	max_pixel.Blue = MIN_PIXEL_VALUE;
 
-	for (int i = 0; i < infoHeader->height - 1; i++) {
-        for (int j = 0; j < infoHeader->width - 1; j++) {
+	for (int i = 0; i < infoHeader->height; i++) {
+        for (int j = 0; j < infoHeader->width; j++) {
         	if (img[i][j].Red > max_pixel.Red && img[i][j].Green > max_pixel.Green 
         		&& img[i][j].Blue > max_pixel.Blue) {
         		max_pixel.Red = img[i][j].Red;
@@ -433,8 +456,8 @@ void double_threshold(bmp_image ***physicalImage, bmp_infoheader *infoHeader,
     low_threshold.Green = high_threshold.Green * low_threshold_ratio;
 
     #pragma omp parallel for
-    for (int i = 0; i < infoHeader->height - 1; i++) {
-        for (int j = 0; j < infoHeader->width - 1; j++) {
+    for (int i = 0; i < infoHeader->height; i++) {
+        for (int j = 0; j < infoHeader->width; j++) {
         	if (img[i][j].Red >= high_threshold.Red && img[i][j].Green >= high_threshold.Green 
         		&& img[i][j].Blue >= high_threshold.Blue) {
         		result[i][j].Red = MAX_PIXEL_VALUE;
@@ -453,6 +476,7 @@ void double_threshold(bmp_image ***physicalImage, bmp_infoheader *infoHeader,
         }
     }
 
+    free_image(physicalImage, infoHeader->height);
     *physicalImage = result;
 }
 
@@ -475,15 +499,15 @@ void hysteresis(bmp_image ***physicalImage, bmp_infoheader *infoHeader) {
     }
 
     #pragma omp parallel for
-	for (int i = 0; i < infoHeader->height - 1; i++) {
-        for (int j = 0; j < infoHeader->width - 1; j++) {
+	for (int i = 0; i < infoHeader->height; i++) {
+        for (int j = 0; j < infoHeader->width; j++) {
         	if (img[i][j].Red == WEAK_PIXEL_VALUE && img[i][j].Green == WEAK_PIXEL_VALUE 
         		&& img[i][j].Blue == WEAK_PIXEL_VALUE) {
         		if ((i - 1 >= 0 && j - 1 >= 0 && is_strong_pixel(img[i-1][j-1])) ||
         			(i - 1 >= 0 && is_strong_pixel(img[i-1][j])) ||
         			(j - 1 >= 0 && is_strong_pixel(img[i][j-1])) ||
-        			(i + 1 <= infoHeader->height && j + 1 < infoHeader->width && is_strong_pixel(img[i+1][j+1])) ||
-        			(i + 1 <= infoHeader->height && is_strong_pixel(img[i+1][j])) ||
+        			(i + 1 < infoHeader->height && j + 1 < infoHeader->width && is_strong_pixel(img[i+1][j+1])) ||
+        			(i + 1 < infoHeader->height && is_strong_pixel(img[i+1][j])) ||
         			(j + 1 < infoHeader->width && is_strong_pixel(img[i][j+1])) ||
         			(i + 1 < infoHeader->height && j - 1 >= 0 && is_strong_pixel(img[i+1][j-1])) ||
         			(i - 1 >= 0 && j + 1 < infoHeader->width && is_strong_pixel(img[i-1][j+1]))) {
@@ -503,12 +527,19 @@ void hysteresis(bmp_image ***physicalImage, bmp_infoheader *infoHeader) {
     	}
     }
 
+    free_image(physicalImage, infoHeader->height);
     *physicalImage = result;	
 }
 
-int main() {
-	omp_set_num_threads(4);
+int main(int argc, char *argv[]) {
+    omp_set_num_threads(4);
+    if (argc > 1) {
+        omp_set_num_threads(atoi(argv[1]));
+    }
 
+    FILE *inputImage = fopen("wp.bmp", "rb");
+
+    // Read the image file header and info header.
     bmp_fileheader *fileHeader = calloc(1,sizeof(bmp_fileheader));
     if(fileHeader == NULL){
         exit(ERROR_CODE);
@@ -517,61 +548,60 @@ int main() {
     if(infoHeader == NULL){
         exit(ERROR_CODE);
     }	
-    FILE *inputImage = fopen("wp.bmp", "rb");
-    //citirea headerului pozei
     read_data(inputImage, fileHeader, infoHeader);
 
-    bmp_image **physicalImage = calloc(infoHeader -> height,
-        sizeof(bmp_image *));
+    // Read the image data.
+    bmp_image **physicalImage = calloc(infoHeader -> height, sizeof(bmp_image *));
     if(physicalImage == NULL){
         exit(ERROR_CODE);
     }
-
     for(int i = 0; i < infoHeader -> height; i++){
         physicalImage[i] = calloc(infoHeader -> width, sizeof(bmp_image));
         if(physicalImage[i] == NULL){
             exit(ERROR_CODE);
         }
     }
-
     read_physicalImage(physicalImage, inputImage, infoHeader, fileHeader);
+
+    fclose(inputImage);
 
     double start = omp_get_wtime();
 
-    // turn image into black and white
-    rgb2gray(&physicalImage, infoHeader);
-
-    // remove noise
+    // Compute the gaussian kernel.
     double** gauss_kernel = compute_gaussian_kernel(GAUSS_KERNEL_SIZE, GAUSS_KERNEL_SIGMA);
 
+    // Turn image into black and white.
+    rgb2gray(&physicalImage, infoHeader);
+
+    // Blur image.
     image_noise_reduction(&physicalImage, infoHeader, gauss_kernel, GAUSS_KERNEL_SIZE / 2);
 
-    // gradient calculation
+    // Detect the edge intensity and direction.
     bmp_image **theta_image = sobel_filters(&physicalImage, infoHeader);
 
-    // non max suppression
+    // Thin out the edges.
     non_max_suppression(&physicalImage, theta_image, infoHeader);
 
-    // double threshold
+    // Identifying strong, weak, and non-relevant pixels.
     double_threshold(&physicalImage, infoHeader, LOW_THRESHOLD_RATIO, HIGH_THRESHOLD_RATIO);
 
-    // edge tracking by hysteresis
+    // Edge tracking by hysteresis.
     hysteresis(&physicalImage, infoHeader);
 
     double end = omp_get_wtime();
 
-    FILE *out = fopen("image_openmp.bmp", "wb");
+    printf("Total time: %f\n", (end - start));
 
+    // Write image.
+    FILE *out = fopen("image_openmp.bmp", "wb");
     print(out, fileHeader, infoHeader);
     print_physicalImage(physicalImage, out, fileHeader, infoHeader);
     fclose(out);
 
-    printf("Total time: %f\n", (end - start));
-
-    free(physicalImage);
+    free_image(&physicalImage, infoHeader->height);
+    free_gaussian_kernel(&gauss_kernel, GAUSS_KERNEL_SIZE);
     free(fileHeader);
     free(infoHeader);
-    fclose(inputImage);
 
     return 0;
 }
