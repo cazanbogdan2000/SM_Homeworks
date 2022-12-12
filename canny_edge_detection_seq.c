@@ -246,6 +246,22 @@ double** compute_gaussian_kernel(int size, double sigma) {
     return result;
 }
 
+void free_gaussian_kernel(double*** gauss_kernel, int height) {
+    for (int i = 0; i < height; i++) {
+        free((*gauss_kernel)[i]);
+    }
+    free(*gauss_kernel);
+    *gauss_kernel = NULL;
+}
+
+void free_image(bmp_image ***image, int height) {
+    for (int i = 0; i < height; i++) {
+        free((*image)[i]);
+    }
+    free(*image);
+    *image = NULL;
+}
+
 // Function to blur the image by applying the gaussian kernel on the image.
 void image_noise_reduction(bmp_image ***physicalImage, bmp_infoheader *infoHeader, 
 	double** gauss_kernel, int k) {
@@ -273,6 +289,7 @@ void image_noise_reduction(bmp_image ***physicalImage, bmp_infoheader *infoHeade
         }
     }
 
+    free_image(physicalImage, infoHeader->height);
     *physicalImage = result;
 }
 
@@ -282,15 +299,12 @@ bmp_image** sobel_filters(bmp_image ***physicalImage, bmp_infoheader *infoHeader
     int Ky[SOBEL_KERNEL_SIZE][SOBEL_KERNEL_SIZE] = {{1, 2, 1}, {0, 0, 0}, {-1, -2, -1}};
 
     bmp_image **img = *physicalImage;
-    bmp_image **Ix = (bmp_image **)calloc(infoHeader->height, sizeof(bmp_image *));
-    bmp_image **Iy = (bmp_image **)calloc(infoHeader->height, sizeof(bmp_image *));
     bmp_image **result = (bmp_image **)calloc(infoHeader->height, sizeof(bmp_image *));
+    bmp_image **theta_img = (bmp_image **)calloc(infoHeader->height, sizeof(bmp_image *));
 
     for (int i = 0; i < infoHeader->height; i++) {
-        Ix[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
-        Iy[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
         result[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
-
+        theta_img[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
     }
 
     int k = SOBEL_KERNEL_SIZE / 2;
@@ -300,63 +314,50 @@ bmp_image** sobel_filters(bmp_image ***physicalImage, bmp_infoheader *infoHeader
             double new_fade_y = 0;
             for (int m = -k; m < k + 1; m++) {
                 for (int n = -k; n < k + 1; n++) {
-                    if (i + m >= 0 && j + n >= 0 && i + m < infoHeader->height && j + n < infoHeader->width) {
-                        new_fade_x += (double)img[i + m][j + n].Blue * Kx[m + k][n + k];
-                        new_fade_y += (double)img[i + m][j + n].Blue * Ky[m + k][n + k];
+                	if (j + n >= 0 && j + n < infoHeader->width && i + m >= 0 && i + m <infoHeader->height) {
+                    	new_fade_x += (double)img[i + m][j + n].Blue * Kx[m + k][n + k];
+                    	new_fade_y += (double)img[i + m][j + n].Blue * Ky[m + k][n + k];
                     }
                 }
             }
-            Ix[i][j].Blue = new_fade_x;
-            Ix[i][j].Green = new_fade_x;
-            Ix[i][j].Red = new_fade_x;
 
-            Iy[i][j].Blue = new_fade_y;
-            Iy[i][j].Green = new_fade_y;
-            Iy[i][j].Red = new_fade_y;
-        }
-    }
-
-    double new_val;
-    for (int i = 0; i < infoHeader->height; i++) {
-        for (int j = 0; j < infoHeader->width; j++) {
-            new_val = sqrt(Ix[i][j].Blue * Ix[i][j].Blue + Iy[i][j].Blue * Iy[i][j].Blue);
+            double new_val = sqrt(new_fade_x * new_fade_x + new_fade_y * new_fade_y);
             result[i][j].Blue = new_val;
             result[i][j].Green = new_val;
             result[i][j].Red = new_val;
+
+            theta_img[i][j].Blue = atan2(new_fade_x, new_fade_y);
+            theta_img[i][j].Green = atan2(new_fade_x, new_fade_y);
+            theta_img[i][j].Red = atan2(new_fade_x, new_fade_y);
         }
     }
 
-    int maxi = 0;
-    for (int i = 0; i < infoHeader->height; i++) {
-        for(int j = 0; j < infoHeader->width; j++) {
-            if (maxi < result[i][j].Blue) {
-                maxi = result[i][j].Blue;
-            }
-        }
-    }
+    bmp_image max_pixel;
+	max_pixel.Red = MIN_PIXEL_VALUE;
+	max_pixel.Green = MIN_PIXEL_VALUE;
+	max_pixel.Blue = MIN_PIXEL_VALUE;
 
-    for (int i = 0; i < infoHeader->height; i++) {
-        for(int j = 0; j < infoHeader->width; j++) {
-            result[i][j].Blue = (double)result[i][j].Blue / maxi * 255;
-            result[i][j].Green = (double)result[i][j].Green / maxi * 255;
-            result[i][j].Red = (double)result[i][j].Red / maxi * 255;
-        }
-    }
-
-    *physicalImage = result;
-
-    bmp_image **theta_img = (bmp_image **)calloc(infoHeader->height, sizeof(bmp_image *));
-    for (int i = 0; i < infoHeader->height; i++) {
-        theta_img[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
-    }
-
-    for (int i = 0; i < infoHeader->height; i++) {
+	for (int i = 0; i < infoHeader->height; i++) {
         for (int j = 0; j < infoHeader->width; j++) {
-            theta_img[i][j].Blue = atan2(Ix[i][j].Blue, Iy[i][j].Blue);
-            theta_img[i][j].Green = atan2(Ix[i][j].Green, Iy[i][j].Green);
-            theta_img[i][j].Red = atan2(Ix[i][j].Red, Iy[i][j].Red);
+        	if (img[i][j].Red > max_pixel.Red && img[i][j].Green > max_pixel.Green 
+        		&& img[i][j].Blue > max_pixel.Blue) {
+        		max_pixel.Red = img[i][j].Red;
+        		max_pixel.Blue = img[i][j].Blue;
+        		max_pixel.Green = img[i][j].Green;
+        	}
         }
     }
+
+    for (int i = 0; i < infoHeader->height; i++) {
+        for(int j = 0; j < infoHeader->width; j++) {
+            result[i][j].Blue = (double)result[i][j].Blue / max_pixel.Blue * 255;
+            result[i][j].Green = (double)result[i][j].Green / max_pixel.Green * 255;
+            result[i][j].Red = (double)result[i][j].Red / max_pixel.Red * 255;
+        }
+    }
+
+    free_image(physicalImage, infoHeader->height);
+    *physicalImage = result;
 
     return theta_img;
 }
@@ -380,21 +381,25 @@ void non_max_suppression(bmp_image ***physicalImage, bmp_image **theta_img,
         }
     }
 
-    for (int i = 0; i < infoHeader->height - 1; i++) {
-        for (int j = 0; j < infoHeader->width - 1; j++) {
+    for (int i = 0; i < infoHeader->height; i++) {
+        for (int j = 0; j < infoHeader->width; j++) {
             double q = 255;
             double r = 255;
 
-            if ((0 <= theta_img[i][j].Blue < 22.5) || (157.5 <= theta_img[i][j].Blue <= 180)) {
+            if (((0 <= theta_img[i][j].Blue < 22.5) || (157.5 <= theta_img[i][j].Blue <= 180)) 
+            	&& (j + 1 < infoHeader->width) && (j-1>=0)) {
                 q = img[i][j+1].Blue;
                 r = img[i][j-1].Blue;
-            } else if (22.5 <= theta_img[i][j].Blue < 67.5) {
+            } else if (22.5 <= theta_img[i][j].Blue < 67.5 && (i+1<infoHeader->height) 
+            	&& (i-1>=0) && (j-1>=0) && (j+1<infoHeader->width)) {
                 q = img[i+1][j-1].Blue;
                 r = img[i-1][j+1].Blue;
-            } else if (67.5 <= theta_img[i][j].Blue < 112.5) {
+            } else if (67.5 <= theta_img[i][j].Blue < 112.5 && (i+1<infoHeader->height) 
+            	&& (i-1>=0)) {
                 q = img[i+1][j].Blue;
                 r = img[i-1][j].Blue;
-            } else if (112.5 <= theta_img[i][j].Blue < 157.5) {
+            } else if (112.5 <= theta_img[i][j].Blue < 157.5 && (i+1<infoHeader->height) 
+            	&& (i-1>=0) && (j-1>=0) && (j+1<infoHeader->width)){
                 q = img[i-1][j-1].Blue;
                 r = img[i+1][j+1].Blue;
             }
@@ -412,6 +417,7 @@ void non_max_suppression(bmp_image ***physicalImage, bmp_image **theta_img,
         }
     }
 
+    free_image(physicalImage, infoHeader->height);
     *physicalImage = result;
 }
 
@@ -430,8 +436,8 @@ void double_threshold(bmp_image ***physicalImage, bmp_infoheader *infoHeader,
 	max_pixel.Green = MIN_PIXEL_VALUE;
 	max_pixel.Blue = MIN_PIXEL_VALUE;
 
-	for (int i = 0; i < infoHeader->height - 1; i++) {
-        for (int j = 0; j < infoHeader->width - 1; j++) {
+	for (int i = 0; i < infoHeader->height; i++) {
+        for (int j = 0; j < infoHeader->width; j++) {
         	if (img[i][j].Red > max_pixel.Red && img[i][j].Green > max_pixel.Green 
         		&& img[i][j].Blue > max_pixel.Blue) {
         		max_pixel.Red = img[i][j].Red;
@@ -451,8 +457,8 @@ void double_threshold(bmp_image ***physicalImage, bmp_infoheader *infoHeader,
     low_threshold.Blue = high_threshold.Blue * low_threshold_ratio;
     low_threshold.Green = high_threshold.Green * low_threshold_ratio;
 
-    for (int i = 0; i < infoHeader->height - 1; i++) {
-        for (int j = 0; j < infoHeader->width - 1; j++) {
+    for (int i = 0; i < infoHeader->height; i++) {
+        for (int j = 0; j < infoHeader->width; j++) {
         	if (img[i][j].Red >= high_threshold.Red && img[i][j].Green >= high_threshold.Green 
         		&& img[i][j].Blue >= high_threshold.Blue) {
         		result[i][j].Red = MAX_PIXEL_VALUE;
@@ -471,6 +477,7 @@ void double_threshold(bmp_image ***physicalImage, bmp_infoheader *infoHeader,
         }
     }
 
+    free_image(physicalImage, infoHeader->height);
     *physicalImage = result;
 }
 
@@ -492,15 +499,15 @@ void hysteresis(bmp_image ***physicalImage, bmp_infoheader *infoHeader) {
         result[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
     }
 
-	for (int i = 0; i < infoHeader->height - 1; i++) {
-        for (int j = 0; j < infoHeader->width - 1; j++) {
+	for (int i = 0; i < infoHeader->height; i++) {
+        for (int j = 0; j < infoHeader->width; j++) {
         	if (img[i][j].Red == WEAK_PIXEL_VALUE && img[i][j].Green == WEAK_PIXEL_VALUE 
         		&& img[i][j].Blue == WEAK_PIXEL_VALUE) {
         		if ((i - 1 >= 0 && j - 1 >= 0 && is_strong_pixel(img[i-1][j-1])) ||
         			(i - 1 >= 0 && is_strong_pixel(img[i-1][j])) ||
         			(j - 1 >= 0 && is_strong_pixel(img[i][j-1])) ||
-        			(i + 1 <= infoHeader->height && j + 1 < infoHeader->width && is_strong_pixel(img[i+1][j+1])) ||
-        			(i + 1 <= infoHeader->height && is_strong_pixel(img[i+1][j])) ||
+        			(i + 1 < infoHeader->height && j + 1 < infoHeader->width && is_strong_pixel(img[i+1][j+1])) ||
+        			(i + 1 < infoHeader->height && is_strong_pixel(img[i+1][j])) ||
         			(j + 1 < infoHeader->width && is_strong_pixel(img[i][j+1])) ||
         			(i + 1 < infoHeader->height && j - 1 >= 0 && is_strong_pixel(img[i+1][j-1])) ||
         			(i - 1 >= 0 && j + 1 < infoHeader->width && is_strong_pixel(img[i-1][j+1]))) {
@@ -520,11 +527,14 @@ void hysteresis(bmp_image ***physicalImage, bmp_infoheader *infoHeader) {
     	}
     }
 
+    free_image(physicalImage, infoHeader->height);
     *physicalImage = result;	
 }
 
 int main() {
-	
+	FILE *inputImage = fopen("wp.bmp", "rb");
+
+	// Read the image file header and info header.
     bmp_fileheader *fileHeader = calloc(1,sizeof(bmp_fileheader));
     if(fileHeader == NULL){
         exit(ERROR_CODE);
@@ -533,60 +543,60 @@ int main() {
     if(infoHeader == NULL){
         exit(ERROR_CODE);
     }	
-    FILE *inputImage = fopen("wp.bmp", "rb");
-    //citirea headerului pozei
     read_data(inputImage, fileHeader, infoHeader);
 
-    bmp_image **physicalImage = calloc(infoHeader -> height,
-        sizeof(bmp_image *));
+    // Read the image data.
+    bmp_image **physicalImage = calloc(infoHeader -> height, sizeof(bmp_image *));
     if(physicalImage == NULL){
         exit(ERROR_CODE);
     }
-
     for(int i = 0; i < infoHeader -> height; i++){
         physicalImage[i] = calloc(infoHeader -> width, sizeof(bmp_image));
         if(physicalImage[i] == NULL){
             exit(ERROR_CODE);
         }
     }
-
     read_physicalImage(physicalImage, inputImage, infoHeader, fileHeader);
 
-    time_t start, end;
-    start = clock();
+    fclose(inputImage);
 
-    // turn image into black and white
-    rgb2gray(&physicalImage, infoHeader);
+    time_t start = clock();
 
-    // remove noise
+    // Compute the gaussian kernel.
     double** gauss_kernel = compute_gaussian_kernel(GAUSS_KERNEL_SIZE, GAUSS_KERNEL_SIGMA);
 
+    // Turn image into black and white.
+    rgb2gray(&physicalImage, infoHeader);
+
+    // Blur image.
     image_noise_reduction(&physicalImage, infoHeader, gauss_kernel, GAUSS_KERNEL_SIZE / 2);
 
-    // gradient calculation
+    // Detect the edge intensity and direction.
     bmp_image **theta_image = sobel_filters(&physicalImage, infoHeader);
 
-    // non max suppression
+    // Thin out the edges.
     non_max_suppression(&physicalImage, theta_image, infoHeader);
 
-    // double threshold
+    // Identifying strong, weak, and non-relevant pixels.
     double_threshold(&physicalImage, infoHeader, LOW_THRESHOLD_RATIO, HIGH_THRESHOLD_RATIO);
 
-    // edge tracking by hysteresis
+    // Edge tracking by hysteresis.
     hysteresis(&physicalImage, infoHeader);
-    end = clock();
-    printf("Total time taken: %ld", end - start);
 
-    FILE *out = fopen("new_image3.bmp", "wb");
+    time_t end = clock();
 
+    printf("Total time: %f\n", ((double)(end - start)  / CLOCKS_PER_SEC));
+
+    // Write image.
+    FILE *out = fopen("image_seq.bmp", "wb");
     print(out, fileHeader, infoHeader);
     print_physicalImage(physicalImage, out, fileHeader, infoHeader);
     fclose(out);
 
-    free(physicalImage);
+    free_image(&physicalImage, infoHeader->height);
+    free_gaussian_kernel(&gauss_kernel, GAUSS_KERNEL_SIZE);
     free(fileHeader);
     free(infoHeader);
-    fclose(inputImage);
 
     return 0;
 }
