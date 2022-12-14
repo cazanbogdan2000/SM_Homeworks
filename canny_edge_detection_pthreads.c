@@ -84,6 +84,9 @@ bmp_fileheader *fileHeader;
 bmp_infoheader *infoHeader;
 bmp_image **physicalImage;
 bmp_image **theta;
+bmp_image max_pixel1;
+bmp_image max_pixel2;
+double** gauss_kernel;
 
 // Function to read the file header and the info header.
 void read_data(FILE *image, bmp_fileheader *fileHeader, bmp_infoheader *infoHeader)
@@ -198,23 +201,27 @@ void print(FILE *out, bmp_fileheader *fileHeader, bmp_infoheader *infoHeader)
 
 // Function to write the bmp data (the image).
 void print_physicalImage(bmp_image **physicalImage, FILE *out, bmp_fileheader *fileHeader,
-                         bmp_infoheader *infoHeader)
-{
+    bmp_infoheader *infoHeader) {
     int padding = 0;
     unsigned char blue, green, red;
 
     fseek(out, fileHeader->imageDataOffset, SEEK_SET);
-    for (int i = infoHeader->height - 1; i >= 0; i--)
-    {
-        for (int j = 0; j < infoHeader->width; j++)
-        {
+    for(int i = infoHeader->height - 1; i >= 0; i--){
+        for(int j = 0; j < infoHeader->width; j++){
             blue = physicalImage[i][j].Blue;
             green = physicalImage[i][j].Green;
             red = physicalImage[i][j].Red;
 
-            fwrite(&blue, sizeof(unsigned char), 1, out);
-            fwrite(&green, sizeof(unsigned char), 1, out);
-            fwrite(&red, sizeof(unsigned char), 1, out);
+            if (i <= 3 || i >= infoHeader->height - 4 || j <= 2 || j >= infoHeader->width - 2) {
+                unsigned char zero = 0;
+                fwrite(&zero, sizeof(unsigned char), 1, out);
+                fwrite(&zero, sizeof(unsigned char), 1, out);
+                fwrite(&zero, sizeof(unsigned char), 1, out);
+            } else {
+                fwrite(&blue, sizeof(unsigned char), 1, out);
+                fwrite(&green, sizeof(unsigned char), 1, out);
+                fwrite(&red, sizeof(unsigned char), 1, out);
+            }
         }
 
         fwrite(&padding, sizeof(unsigned char), infoHeader->width % 4, out);
@@ -291,6 +298,22 @@ double **compute_gaussian_kernel(int size, double sigma)
     return result;
 }
 
+void free_gaussian_kernel(double*** gauss_kernel, int height) {
+    for (int i = 0; i < height; i++) {
+        free((*gauss_kernel)[i]);
+    }
+    free(*gauss_kernel);
+    *gauss_kernel = NULL;
+}
+
+void free_image(bmp_image ***image, int height) {
+    for (int i = 0; i < height; i++) {
+        free((*image)[i]);
+    }
+    free(*image);
+    *image = NULL;
+}
+
 // Function to blur the image by applying the gaussian kernel on the image.
 void image_noise_reduction(bmp_image ***physicalImage, bmp_infoheader *infoHeader,
                            double **gauss_kernel, int k, thread_arg arg)
@@ -340,8 +363,6 @@ void image_noise_reduction(bmp_image ***physicalImage, bmp_infoheader *infoHeade
     }
 }
 
-int maxi = 0;
-
 // Function to detects the edge intensity and direction.
 void sobel_filters(bmp_image ***physicalImage, bmp_infoheader *infoHeader, thread_arg arg)
 {
@@ -356,65 +377,48 @@ void sobel_filters(bmp_image ***physicalImage, bmp_infoheader *infoHeader, threa
             : infoHeader->height;
 
     bmp_image **img = *physicalImage;
-    bmp_image **Ix = (bmp_image **)calloc(end - start, sizeof(bmp_image *));
-    bmp_image **Iy = (bmp_image **)calloc(end - start, sizeof(bmp_image *));
     bmp_image **result = (bmp_image **)calloc(end - start, sizeof(bmp_image *));
 
     for (int i = 0; i < end - start; i++)
     {
-        Ix[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
-        Iy[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
         result[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
     }
 
     int k = SOBEL_KERNEL_SIZE / 2;
-    for (int i = start; i < end; i++)
-    {
-        for (int j = 0; j < infoHeader->width; j++)
-        {
+    for (int i = start; i < end; i++) {
+        for(int j = 0; j < infoHeader->width; j++) {
             double new_fade_x = 0;
             double new_fade_y = 0;
-            for (int m = -k; m < k + 1; m++)
-            {
-                for (int n = -k; n < k + 1; n++)
-                {
-                    if (i + m >= 0 && j + n >= 0 && i + m < infoHeader->height && j + n < infoHeader->width)
-                    {
+            for (int m = -k; m < k + 1; m++) {
+                for (int n = -k; n < k + 1; n++) {
+                    if (j + n >= 0 && j + n < infoHeader->width && i + m >= 0 && i + m < infoHeader->height) {
                         new_fade_x += (double)img[i + m][j + n].Blue * Kx[m + k][n + k];
                         new_fade_y += (double)img[i + m][j + n].Blue * Ky[m + k][n + k];
                     }
                 }
             }
-            Ix[i - start][j].Blue = new_fade_x;
-            Ix[i - start][j].Green = new_fade_x;
-            Ix[i - start][j].Red = new_fade_x;
 
-            Iy[i - start][j].Blue = new_fade_y;
-            Iy[i - start][j].Green = new_fade_y;
-            Iy[i - start][j].Red = new_fade_y;
-        }
-    }
-
-    double new_val;
-    for (int i = start; i < end; i++)
-    {
-        for (int j = 0; j < infoHeader->width; j++)
-        {
-            new_val = sqrt(Ix[i - start][j].Blue * Ix[i - start][j].Blue + Iy[i - start][j].Blue * Iy[i - start][j].Blue);
+            double new_val = sqrt(new_fade_x * new_fade_x + new_fade_y * new_fade_y);
             result[i - start][j].Blue = new_val;
             result[i - start][j].Green = new_val;
             result[i - start][j].Red = new_val;
+
+            theta[i][j].Blue = atan2(new_fade_x, new_fade_y);
+            theta[i][j].Green = atan2(new_fade_x, new_fade_y);
+            theta[i][j].Red = atan2(new_fade_x, new_fade_y);
         }
     }
 
-    for (int i = start; i < end; i++)
-    {
-        for (int j = 0; j < infoHeader->width; j++)
-        {
+    pthread_barrier_wait(&barrier);
+
+    for (int i = start; i < end; i++) {
+        for (int j = 0; j < infoHeader->width; j++) {
             pthread_mutex_lock(&mutex);
-            if (maxi < result[i - start][j].Blue)
-            {
-                maxi = result[i - start][j].Blue;
+            if (img[i][j].Red > max_pixel1.Red && img[i][j].Green > max_pixel1.Green 
+                && img[i][j].Blue > max_pixel1.Blue) {
+                max_pixel1.Red = img[i][j].Red;
+                max_pixel1.Blue = img[i][j].Blue;
+                max_pixel1.Green = img[i][j].Green;
             }
             pthread_mutex_unlock(&mutex);
         }
@@ -426,25 +430,17 @@ void sobel_filters(bmp_image ***physicalImage, bmp_infoheader *infoHeader, threa
     {
         for (int j = 0; j < infoHeader->width; j++)
         {
-            result[i - start][j].Blue = (double)result[i - start][j].Blue / maxi * 255;
-            result[i - start][j].Green = (double)result[i - start][j].Green / maxi * 255;
-            result[i - start][j].Red = (double)result[i - start][j].Red / maxi * 255;
+            result[i - start][j].Blue = (double)result[i - start][j].Blue / max_pixel1.Blue * 255;
+            result[i - start][j].Green = (double)result[i - start][j].Green / max_pixel1.Green * 255;
+            result[i - start][j].Red = (double)result[i - start][j].Red / max_pixel1.Red * 255;
         }
     }
+
+    pthread_barrier_wait(&barrier);
 
     for (int i = start; i < end; i++)
     {
         (*physicalImage)[i] = result[i - start];
-    }
-
-    for (int i = start; i < end; i++)
-    {
-        for (int j = 0; j < infoHeader->width; j++)
-        {
-            theta[i][j].Blue = atan2(Ix[i - start][j].Blue, Iy[i - start][j].Blue);
-            theta[i][j].Green = atan2(Ix[i - start][j].Green, Iy[i - start][j].Green);
-            theta[i][j].Red = atan2(Ix[i - start][j].Red, Iy[i - start][j].Red);
-        }
     }
 }
 
@@ -479,29 +475,33 @@ void non_max_suppression(bmp_image ***physicalImage, bmp_image **theta_img,
         }
     }
 
-    for (int i = start; i < end - 1; i++)
+    for (int i = start; i < end; i++)
     {
-        for (int j = 0; j < infoHeader->width - 1; j++)
+        for (int j = 0; j < infoHeader->width; j++)
         {
             double q = 255;
             double r = 255;
 
-            if ((0 <= theta_img[i][j].Blue < 22.5) || (157.5 <= theta_img[i][j].Blue <= 180))
+            if (((0 <= theta_img[i][j].Blue < 22.5) || (157.5 <= theta_img[i][j].Blue <= 180)) 
+                && (j + 1 < infoHeader->width) && (j-1>=0))
             {
                 q = img[i][j + 1].Blue;
                 r = img[i][j - 1].Blue;
             }
-            else if (22.5 <= theta_img[i][j].Blue < 67.5)
+            else if (22.5 <= theta_img[i][j].Blue < 67.5 && (i+1<infoHeader->height) 
+                && (i-1>=0) && (j-1>=0) && (j+1<infoHeader->width)) 
             {
                 q = img[i + 1][j - 1].Blue;
                 r = img[i - 1][j + 1].Blue;
             }
-            else if (67.5 <= theta_img[i][j].Blue < 112.5)
+            else if (67.5 <= theta_img[i][j].Blue < 112.5 && (i+1<infoHeader->height) 
+                && (i-1>=0)) 
             {
                 q = img[i + 1][j].Blue;
                 r = img[i - 1][j].Blue;
             }
-            else if (112.5 <= theta_img[i][j].Blue < 157.5)
+            else if (112.5 <= theta_img[i][j].Blue < 157.5 && (i+1<infoHeader->height) 
+                && (i-1>=0) && (j-1>=0) && (j+1<infoHeader->width))
             {
                 q = img[i - 1][j - 1].Blue;
                 r = img[i + 1][j + 1].Blue;
@@ -547,37 +547,36 @@ void double_threshold(bmp_image ***physicalImage, bmp_infoheader *infoHeader,
         result[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
     }
 
-    bmp_image max_pixel;
-    max_pixel.Red = MIN_PIXEL_VALUE;
-    max_pixel.Green = MIN_PIXEL_VALUE;
-    max_pixel.Blue = MIN_PIXEL_VALUE;
+    pthread_barrier_wait(&barrier);
 
-    for (int i = 0; i < infoHeader->height - 1; i++)
-    {
-        for (int j = 0; j < infoHeader->width - 1; j++)
-        {
-            if (img[i][j].Red > max_pixel.Red && img[i][j].Green > max_pixel.Green && img[i][j].Blue > max_pixel.Blue)
-            {
-                max_pixel.Red = img[i][j].Red;
-                max_pixel.Blue = img[i][j].Blue;
-                max_pixel.Green = img[i][j].Green;
+    for (int i = start; i < end; i++) {
+        for (int j = 0; j < infoHeader->width; j++) {
+            pthread_mutex_lock(&mutex);
+            if (img[i][j].Red > max_pixel2.Red && img[i][j].Green > max_pixel2.Green 
+                && img[i][j].Blue > max_pixel2.Blue) {
+                max_pixel2.Red = img[i][j].Red;
+                max_pixel2.Blue = img[i][j].Blue;
+                max_pixel2.Green = img[i][j].Green;
             }
+            pthread_mutex_unlock(&mutex);
         }
     }
 
+    pthread_barrier_wait(&barrier);
+
     bmp_image high_threshold;
-    high_threshold.Red = max_pixel.Red * high_threshold_ratio;
-    high_threshold.Blue = max_pixel.Blue * high_threshold_ratio;
-    high_threshold.Green = max_pixel.Green * high_threshold_ratio;
+    high_threshold.Red = max_pixel2.Red * high_threshold_ratio;
+    high_threshold.Blue = max_pixel2.Blue * high_threshold_ratio;
+    high_threshold.Green = max_pixel2.Green * high_threshold_ratio;
 
     bmp_image low_threshold;
     low_threshold.Red = high_threshold.Red * low_threshold_ratio;
     low_threshold.Blue = high_threshold.Blue * low_threshold_ratio;
     low_threshold.Green = high_threshold.Green * low_threshold_ratio;
 
-    for (int i = start; i < end - 1; i++)
+    for (int i = start; i < end; i++)
     {
-        for (int j = 0; j < infoHeader->width - 1; j++)
+        for (int j = 0; j < infoHeader->width; j++)
         {
             if (img[i][j].Red >= high_threshold.Red && img[i][j].Green >= high_threshold.Green && img[i][j].Blue >= high_threshold.Blue)
             {
@@ -636,17 +635,17 @@ void hysteresis(bmp_image ***physicalImage, bmp_infoheader *infoHeader, thread_a
         result[i] = (bmp_image *)calloc(infoHeader->width, sizeof(bmp_image));
     }
 
-    for (int i = start; i < end - 1; i++)
+    for (int i = start; i < end; i++)
     {
-        for (int j = 0; j < infoHeader->width - 1; j++)
+        for (int j = 0; j < infoHeader->width; j++)
         {
             if (img[i][j].Red == WEAK_PIXEL_VALUE && img[i][j].Green == WEAK_PIXEL_VALUE && img[i][j].Blue == WEAK_PIXEL_VALUE)
             {
                 if ((i - 1 >= start && j - 1 >= 0 && is_strong_pixel(img[i - 1][j - 1])) ||
                     (i - 1 >= start && is_strong_pixel(img[i - 1][j])) ||
                     (j - 1 >= 0 && is_strong_pixel(img[i][j - 1])) ||
-                    (i + 1 <= end && j + 1 < infoHeader->width && is_strong_pixel(img[i + 1][j + 1])) ||
-                    (i + 1 <= end && is_strong_pixel(img[i + 1][j])) ||
+                    (i + 1 < end && j + 1 < infoHeader->width && is_strong_pixel(img[i + 1][j + 1])) ||
+                    (i + 1 < end && is_strong_pixel(img[i + 1][j])) ||
                     (j + 1 < infoHeader->width && is_strong_pixel(img[i][j + 1])) ||
                     (i + 1 < end && j - 1 >= 0 && is_strong_pixel(img[i + 1][j - 1])) ||
                     (i - 1 >= start && j + 1 < infoHeader->width && is_strong_pixel(img[i - 1][j + 1])))
@@ -683,36 +682,27 @@ void *thread_func(void *args)
 {
     thread_arg arg = *(thread_arg *)args;
 
-    // turn image into black and white
+    // Turn image into black and white.
     rgb2gray(&physicalImage, infoHeader, arg);
-
     pthread_barrier_wait(&barrier);
 
-    // remove noise
-    double** gauss_kernel = compute_gaussian_kernel(GAUSS_KERNEL_SIZE, GAUSS_KERNEL_SIGMA);
-
-    pthread_barrier_wait(&barrier);
-
+    // Blur image.
     image_noise_reduction(&physicalImage, infoHeader, gauss_kernel, GAUSS_KERNEL_SIZE / 2, arg);
-
     pthread_barrier_wait(&barrier);
 
-    // gradient calculation
+    // Detect the edge intensity and direction.
     sobel_filters(&physicalImage, infoHeader, arg);
-
     pthread_barrier_wait(&barrier);
 
-    // non max suppression
+    // Thin out the edges.
     non_max_suppression(&physicalImage, theta, infoHeader, arg);
-
     pthread_barrier_wait(&barrier);
 
-    // double threshold
+    // Identifying strong, weak, and non-relevant pixels.
     double_threshold(&physicalImage, infoHeader, LOW_THRESHOLD_RATIO, HIGH_THRESHOLD_RATIO, arg);
-
     pthread_barrier_wait(&barrier);
 
-    // edge tracking by hysteresis
+    // Edge tracking by hysteresis.
     hysteresis(&physicalImage, infoHeader, arg);
 
     return NULL;
@@ -720,90 +710,99 @@ void *thread_func(void *args)
 
 int main(int argc, char *argv[])
 {
-
-    fileHeader = calloc(1, sizeof(bmp_fileheader));
-    if (fileHeader == NULL)
-    {
-        exit(ERROR_CODE);
-    }
-    infoHeader = calloc(1, sizeof(bmp_infoheader));
-    if (infoHeader == NULL)
-    {
-        exit(ERROR_CODE);
-    }
-    FILE *inputImage = fopen("wp.bmp", "rb");
-    // citirea headerului pozei
-    read_data(inputImage, fileHeader, infoHeader);
-
-    physicalImage = calloc(infoHeader->height,
-                           sizeof(bmp_image *));
-    theta = calloc(infoHeader->height, sizeof(bmp_image *));
-    if (physicalImage == NULL)
-    {
-        exit(ERROR_CODE);
-    }
-
-    for (int i = 0; i < infoHeader->height; i++)
-    {
-        physicalImage[i] = calloc(infoHeader->width, sizeof(bmp_image));
-        if (physicalImage[i] == NULL)
-        {
-            exit(ERROR_CODE);
-        }
-        theta[i] = calloc(infoHeader->width, sizeof(bmp_image));
-    }
-
-    read_physicalImage(physicalImage, inputImage, infoHeader, fileHeader);
-
-    time_t start, end;
-
-    start = clock();
-
-    if (argc < 2)
-    {
+    if (argc < 2) {
         printf("The program should be ran ./<program_name> <number_of_threads>\n");
         exit(-1);
     }
 
     int num_threads = atoi(argv[1]);
-    pthread_t threads[num_threads];
+    FILE *inputImage = fopen("wp.bmp", "rb");
+
+    // Read the image file header and info header.
+    fileHeader = calloc(1, sizeof(bmp_fileheader));
+    if (fileHeader == NULL) {
+        exit(ERROR_CODE);
+    }
+    infoHeader = calloc(1, sizeof(bmp_infoheader));
+    if (infoHeader == NULL) {
+        exit(ERROR_CODE);
+    }
+    read_data(inputImage, fileHeader, infoHeader);
+
+    // Read the image data.
+    physicalImage = calloc(infoHeader->height, sizeof(bmp_image *));
+    if (physicalImage == NULL) {
+        exit(ERROR_CODE);
+    }
+    for (int i = 0; i < infoHeader->height; i++) {
+        physicalImage[i] = calloc(infoHeader->width, sizeof(bmp_image));
+        if (physicalImage[i] == NULL) {
+            exit(ERROR_CODE);
+        }
+    }
+    read_physicalImage(physicalImage, inputImage, infoHeader, fileHeader);
+
+    fclose(inputImage);
+
+    time_t start = clock();
+
     int r;
     long id;
     void *status;
     thread_arg arguments[num_threads];
+    pthread_t threads[num_threads];
+
+    // Alloc memory for theta.
+    theta = calloc(infoHeader->height, sizeof(bmp_image *));
+    if (theta == NULL){
+        exit(ERROR_CODE);
+    }
+    for (int i = 0; i < infoHeader->height; i++) {
+        theta[i] = calloc(infoHeader->width, sizeof(bmp_image));
+    }
+
+    // Initialize maximum pixels at 0.
+    max_pixel1.Red = MIN_PIXEL_VALUE;
+    max_pixel1.Green = MIN_PIXEL_VALUE;
+    max_pixel1.Blue = MIN_PIXEL_VALUE;
+
+    max_pixel2.Red = MIN_PIXEL_VALUE;
+    max_pixel2.Green = MIN_PIXEL_VALUE;
+    max_pixel2.Blue = MIN_PIXEL_VALUE;
+
+    // Compute the gaussian kernel.
+    gauss_kernel = compute_gaussian_kernel(GAUSS_KERNEL_SIZE, GAUSS_KERNEL_SIGMA);
 
     pthread_barrier_init(&barrier, NULL, num_threads);
     pthread_mutex_init(&mutex, NULL);
 
-    for (int i = 0; i < num_threads; i++)
-    {
+    // Create threads.
+    for (int i = 0; i < num_threads; i++) {
         arguments[i].num_threads = num_threads;
         arguments[i].thread_id = i;
-    }
-
-    for (int i = 0; i < num_threads; i++)
-    {
         r = pthread_create(&threads[i], NULL, thread_func, &arguments[i]);
     }
 
-    for (int i = 0; i < num_threads; i++)
-    {
+    // Close threads.
+    for (int i = 0; i < num_threads; i++) {
         r = pthread_join(threads[i], NULL);
     }
 
-    end = clock();
-    printf("Total time taken: %ld", end - start);
-    
-    FILE *out = fopen("new_image4.bmp", "wb");
+    time_t end = clock();
 
+    printf("Total time taken: %f\n", ((double)(end - start)  / CLOCKS_PER_SEC));
+    
+    // Write image.
+    FILE *out = fopen("image_pthreads.bmp", "wb");
     print(out, fileHeader, infoHeader);
     print_physicalImage(physicalImage, out, fileHeader, infoHeader);
     fclose(out);
 
-    free(physicalImage);
+    free_image(&physicalImage, infoHeader->height);
+    free_gaussian_kernel(&gauss_kernel, GAUSS_KERNEL_SIZE);
+    free_image(&theta, infoHeader->height);
     free(fileHeader);
     free(infoHeader);
-    fclose(inputImage);
 
     return 0;
 }
