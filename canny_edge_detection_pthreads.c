@@ -641,14 +641,14 @@ void hysteresis(bmp_image ***physicalImage, bmp_infoheader *infoHeader, thread_a
         {
             if (img[i][j].Red == WEAK_PIXEL_VALUE && img[i][j].Green == WEAK_PIXEL_VALUE && img[i][j].Blue == WEAK_PIXEL_VALUE)
             {
-                if ((i - 1 >= start && j - 1 >= 0 && is_strong_pixel(img[i - 1][j - 1])) ||
-                    (i - 1 >= start && is_strong_pixel(img[i - 1][j])) ||
+                if ((i - 1 >= 0 && j - 1 >= 0 && is_strong_pixel(img[i - 1][j - 1])) ||
+                    (i - 1 >= 0 && is_strong_pixel(img[i - 1][j])) ||
                     (j - 1 >= 0 && is_strong_pixel(img[i][j - 1])) ||
-                    (i + 1 < end && j + 1 < infoHeader->width && is_strong_pixel(img[i + 1][j + 1])) ||
-                    (i + 1 < end && is_strong_pixel(img[i + 1][j])) ||
+                    (i + 1 < infoHeader->height && j + 1 < infoHeader->width && is_strong_pixel(img[i + 1][j + 1])) ||
+                    (i + 1 < infoHeader->height && is_strong_pixel(img[i + 1][j])) ||
                     (j + 1 < infoHeader->width && is_strong_pixel(img[i][j + 1])) ||
-                    (i + 1 < end && j - 1 >= 0 && is_strong_pixel(img[i + 1][j - 1])) ||
-                    (i - 1 >= start && j + 1 < infoHeader->width && is_strong_pixel(img[i - 1][j + 1])))
+                    (i + 1 < infoHeader->height && j - 1 >= 0 && is_strong_pixel(img[i + 1][j - 1])) ||
+                    (i - 1 >= 0 && j + 1 < infoHeader->width && is_strong_pixel(img[i - 1][j + 1])))
                 {
                     result[i - start][j].Red = MAX_PIXEL_VALUE;
                     result[i - start][j].Blue = MAX_PIXEL_VALUE;
