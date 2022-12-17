@@ -1,0 +1,70 @@
+Smau Mara-Alexandra 341C1
+Cazan Bogdan-Marian 341C1
+
+                            Homeworks 1 & 2 SM
+
+                            Canny edge detection
+
+
+        In this homework we have implemented in C a program to identify edges
+    of an image using the Canny Edge Algorithm.
+
+        We have started by converting the orginal image into a black and white
+    one.
+    After that, we reduced the noise in the image using Gaussian Kernel. Next
+    step was to apply filters on the image, which gave us fine and pretty
+    defined edges. In order to take only the "important ones" (I think a better
+    word for this would be a relevant value interval), we made another filter,
+    the min_max_supression.
+        Last steps were to reduce all the lines into 3 big categories, strong,
+    weak, non-relevant, and after that we apply a hysteresis on the last image, 
+    to transform weak pixels into strong ones.
+
+        After we have implemented the sequential part, we decided to start the others
+    implementations, reaching to 5 final variants:
+        1) Pthread
+        2) MPI
+        3) OpenMP
+        4) OpenMP + MPI
+        5) OpenMP + Pthread (BONUS) 
+
+        1) For Pthreads, we separated the photo in $num_tread chunks, on
+    horizontally, meaning that the height is splitted into $num_thread threads,
+    and the width remain the same. After we split the image, we apply every step
+    mentioned above in the sequential implementation. From thread ID, we take
+    the start and the end we have to apply on each chunk, modifing in the
+    original photo.
+
+        2) MPI - the image is splitted into chunks of N / num_proc. The chunks
+    are sent to the worker processes. The root process is playing a master role,
+    it distribute the image into those chunks and rebuild the resulted one.
+        In this implementation, we add a padding of 2 lines in the supperior and
+    inferior part of the chunk. After all the filter are applied, we swap the
+    last 2 lines from a chunk with the first 2 chunks of the succesor chunk 
+    (because of data dependency).
+
+        3) OpenMP - We just parallelized each external for using the #pragma
+    adnotation and each thread takes a line and apply the filters on it.
+
+        4) and 5) We started from the basic implementation of MPI and added or 
+    exchanged the implementation of the Pthreads in first place, and with OpenMP
+    for the second part.
+
+        How to run:
+
+        1) make -> in order to build every executable
+        2) make run_<implementation> -> to run a specific implementation
+        3) make diff_<implementation> -> this command will run the implementaion
+    selected and after that will compare the result with the sequential form
+
+    By default, the number of preccesses launched for MPI are 4, and the number 
+    of threads are also 4. If you want to run with different parameters, you can
+    use the following:
+
+    make NUM_PROC=8 NUM_THREAD=8 run_mpi_and_pthreads
+
+        !!! Careful with the MPI, you need to --oversubcribe the number of 
+    preccesses before, otherwise it will fail.
+
+    That is pretty much everything about this homework!
+ 
