@@ -1,7 +1,10 @@
-build: canny_edge_detection canny_edge_detection_openmp canny_edge_detection_mpi canny_edge_detection_pthreads canny_edge_detection_mpi_and_opnemp
+NUM_PROC=4
+NUM_THREAD=4
 
-canny_edge_detection: canny_edge_detection.c
-	gcc canny_edge_detection.c -o canny_edge_detection -lm
+build: canny_edge_detection_seq canny_edge_detection_openmp canny_edge_detection_mpi canny_edge_detection_pthreads canny_edge_detection_mpi_and_opnemp canny_edge_detection_mpi_and_pthreads
+
+canny_edge_detection_seq: canny_edge_detection_seq.c
+	gcc canny_edge_detection_seq.c -o canny_edge_detection_seq -lm
 
 canny_edge_detection_openmp: canny_edge_detection_openmp.c
 	gcc canny_edge_detection_openmp.c -o canny_edge_detection_openmp -lm -fopenmp
@@ -15,32 +18,41 @@ canny_edge_detection_pthreads: canny_edge_detection_pthreads.c
 canny_edge_detection_mpi_and_opnemp: canny_edge_detection_mpi_and_opnemp.c
 	mpicc canny_edge_detection_mpi_and_opnemp.c -o canny_edge_detection_mpi_and_opnemp -lm -fopenmp
 
-run_seq: canny_edge_detection
-	./canny_edge_detection
+canny_edge_detection_mpi_and_pthreads: canny_edge_detection_mpi_and_pthreads.c
+	mpicc canny_edge_detection_mpi_and_pthreads.c -o canny_edge_detection_mpi_and_pthreads -lm -lpthread
+
+run_seq: canny_edge_detection_seq
+	./canny_edge_detection_seq
 
 run_openmp: canny_edge_detection_openmp
 	./canny_edge_detection_openmp
 
-run_mpi_4: canny_edge_detection_mpi
-	mpirun -np 4 ./canny_edge_detection_mpi
+run_mpi: canny_edge_detection_mpi
+	mpirun -np $(NUM_PROC) ./canny_edge_detection_mpi
 
-run_mpi_8: canny_edge_detection_mpi
-	mpirun -np 8 ./canny_edge_detection_mpi
-	
-run_pthreads_4:
-	./canny_edge_detection_pthreads 4
-	
-run_pthreads_8:
-	./canny_edge_detection_pthreads 8
-	
-run_mpi_and_opnemp_2_2: canny_edge_detection_mpi_and_opnemp
-	mpirun -np 2 ./canny_edge_detection_mpi_and_opnemp 2
+run_pthreads:
+	./canny_edge_detection_pthreads $(NUM_THREAD)
 
-run_mpi_and_opnemp_4_2: canny_edge_detection_mpi_and_opnemp
-	mpirun -np 4 ./canny_edge_detection_mpi_and_opnemp 2
+run_mpi_and_pthreads: canny_edge_detection_mpi_and_pthreads
+	mpirun -np $(NUM_PROC) ./canny_edge_detection_mpi_and_pthreads $(NUM_THREAD)
 
-run_mpi_and_opnemp_4_4: canny_edge_detection_mpi_and_opnemp
-	mpirun -np 4 ./canny_edge_detection_mpi_and_opnemp 4
+run_mpi_and_opnemp: canny_edge_detection_mpi_and_opnemp
+	mpirun -np $(NUM_PROC) ./canny_edge_detection_mpi_and_opnemp $(NUM_THREAD)
+
+diff_mpi: run_mpi run_seq
+	diff image_seq.bmp image_mpi.bmp
+
+diff_pthreads: run_pthreads run_seq
+	diff image_seq.bmp image_pthreads.bmp
+
+diff_openmp: run_openmp run_seq
+	diff image_seq.bmp image_openmp.bmp
+
+diff_mpi_and_openmp: run_mpi_and_opnemp run_seq
+	diff image_seq.bmp image_mpi_and_openmp.bmp
+
+diff_mpi_and_pthreads: run_mpi_and_pthreads run_seq
+	diff image_seq.bmp image_mpi_and_pthreads.bmp
 
 clean: 
 	rm -f canny_edge_detection
@@ -48,5 +60,6 @@ clean:
 	rm -f canny_edge_detection_mpi
 	rm -f canny_edge_detection_pthreads
 	rm -f canny_edge_detection_mpi_and_opnemp
-
+	rm -f canny_edge_detection_mpi_and_pthreads
+	rm -f image_*
 

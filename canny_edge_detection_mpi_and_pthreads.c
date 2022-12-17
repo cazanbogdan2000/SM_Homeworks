@@ -1,8 +1,8 @@
-#include <omp.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include "mpi.h"
 
 #define ROOT                    0
@@ -76,7 +76,23 @@ int block_lengths[3] = {1, 1, 1};
 MPI_Datatype types[3] = {MPI_DOUBLE, MPI_DOUBLE, MPI_DOUBLE};
 MPI_Datatype MPI_PIXEL_TYPE;
 MPI_Aint offsets[3];
+bmp_fileheader *fileHeader;
+bmp_infoheader *infoHeader;
+bmp_image **physicalImage;
+bmp_image **theta_image;
+bmp_image max_pixel1;
+bmp_image max_pixel2;
+double** gauss_kernel;
 
+typedef struct
+{
+    int num_threads;
+    int thread_id;
+} thread_arg;
+
+int num_threads;
+pthread_barrier_t barrier;
+pthread_mutex_t mutex;
 
 // Function to read the file header and the info header.
 void read_data(FILE *image, bmp_fileheader *fileHeader, bmp_infoheader *infoHeader) {
@@ -212,19 +228,65 @@ void print_physicalImage(bmp_image **physicalImage, FILE *out, bmp_fileheader *f
     }
 }
 
+typedef struct
+{
+    int num_threads;
+    int thread_id;
+    bmp_image ***physicalImage;
+    int height;
+    int width;
+} rgb2gray_arg;
+
+void* rgb2gray_thread(void* args) {
+    rgb2gray_arg arg = *(rgb2gray_arg *)args;
+    int start, end;
+    start = arg.thread_id * (double)arg.height / arg.num_threads;
+    end =
+        (arg.thread_id + 1) * (double)arg.height / arg.num_threads < arg.height
+            ? (arg.thread_id + 1) * (double)arg.height / arg.num_threads
+            : arg.height;
+
+    for(int i = start; i < end; i++) {
+        if (start < 2 && end >= arg.height - 2) {
+            continue;
+        }
+        for(int j = 0; j < arg.width; j++) {
+            double noColor = ((*(arg.physicalImage))[i][j].Blue *  0.114021 + 
+                (*(arg.physicalImage))[i][j].Green * 0.587043 +
+                (*(arg.physicalImage))[i][j].Red * 0.298936) / 3;
+
+            (*(arg.physicalImage))[i][j].Blue = noColor;
+            (*(arg.physicalImage))[i][j].Green = noColor;
+            (*(arg.physicalImage))[i][j].Red = noColor;
+        }
+    }
+    return NULL;
+}
+
 // Function to convert a color photo to black and white.
 void rgb2gray(bmp_image ***physicalImage, int height, int width){
-    #pragma omp parallel for
-    for(int i = 2; i < height - 2; i++) {
-        for(int j = 0; j < width; j++) {
-            double noColor = ((*physicalImage)[i][j].Blue *  0.114021 + 
-                (*physicalImage)[i][j].Green * 0.587043 +
-                (*physicalImage)[i][j].Red * 0.298936) / 3;
+    int r;
+    long id;
+    void *status;
+    rgb2gray_arg arguments[num_threads];
+    pthread_t threads[num_threads];
 
-            (*physicalImage)[i][j].Blue = noColor;
-            (*physicalImage)[i][j].Green = noColor;
-            (*physicalImage)[i][j].Red = noColor;
-        }
+    pthread_barrier_init(&barrier, NULL, num_threads);
+    pthread_mutex_init(&mutex, NULL);
+
+    // Create threads.
+    for (int i = 0; i < num_threads; i++) {
+        arguments[i].num_threads = num_threads;
+        arguments[i].thread_id = i;
+        arguments[i].physicalImage = physicalImage;
+        arguments[i].height = height;
+        arguments[i].width = width;
+        r = pthread_create(&threads[i], NULL, rgb2gray_thread, &arguments[i]);
+    }
+
+    // Close threads.
+    for (int i = 0; i < num_threads; i++) {
+        r = pthread_join(threads[i], NULL);
     }
 }
 
@@ -279,9 +341,30 @@ void free_image(bmp_image ***image, int height) {
     *image = NULL;
 }
 
+typedef struct
+{
+    int num_threads;
+    int thread_id;
+    bmp_image ***physicalImage;
+    int height;
+    int width;
+    double **gauss_kernel;
+    int k;
+} image_noise_reduction_arg;
+
 // Function to blur the image by applying the gaussian kernel on the image.
 void image_noise_reduction(bmp_image ***physicalImage, int height, int width, 
 	double** gauss_kernel, int k) {
+
+    int r;
+    long id;
+    void *status;
+    rgb2gray_arg arguments[num_threads];
+    pthread_t threads[num_threads];
+
+    pthread_barrier_init(&barrier, NULL, num_threads);
+    pthread_mutex_init(&mutex, NULL);
+
     bmp_image **img = *physicalImage;
 
     bmp_image **result = (bmp_image **)calloc(height, sizeof(bmp_image *));
@@ -289,7 +372,6 @@ void image_noise_reduction(bmp_image ***physicalImage, int height, int width,
         result[i] = (bmp_image *)calloc(width, sizeof(bmp_image));
     }
 
-    #pragma omp parallel for
     for (int i = 2; i < height - 2; i++) {
         for(int j = 0; j < width; j++) {
             double new_fade = 0;
@@ -369,7 +451,6 @@ bmp_image** sobel_filters(bmp_image ***physicalImage, int height, int width) {
     MPI_Send(&max_pixel, 1, MPI_PIXEL_TYPE, ROOT, 0, MPI_COMM_WORLD);
     MPI_Recv(&max_pixel, 1, MPI_PIXEL_TYPE, ROOT, 0, MPI_COMM_WORLD, NULL);
 
-    #pragma omp parallel for
     for (int i = 2; i < height-2; i++) {
         for(int j = 0; j < width; j++) {
             result[i][j].Blue = (double)result[i][j].Blue / max_pixel.Blue * 255;
@@ -394,7 +475,6 @@ void non_max_suppression(bmp_image ***physicalImage, bmp_image **theta_img,
         result[i] = (bmp_image *)calloc(width, sizeof(bmp_image));
     }
 
-    #pragma omp parallel for
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             theta_img[i][j].Blue = theta_img[i][j].Blue * HALF_CIRCLE_ANGLE / M_PI;
@@ -404,7 +484,6 @@ void non_max_suppression(bmp_image ***physicalImage, bmp_image **theta_img,
         }
     }
 
-    #pragma omp parallel for
     for (int i = 2; i < height - 2; i++) {
         for (int j = 0; j < width; j++) {
             double q = 255;
@@ -481,7 +560,6 @@ void double_threshold(bmp_image ***physicalImage, int height, int width,
     low_threshold.Blue = high_threshold.Blue * low_threshold_ratio;
     low_threshold.Green = high_threshold.Green * low_threshold_ratio;
 
-    #pragma omp parallel for
     for (int i = 2; i < height - 2; i++) { 
         for (int j = 0; j < width; j++) {
         	if (img[i][j].Red >= high_threshold.Red && img[i][j].Green >= high_threshold.Green 
@@ -524,7 +602,6 @@ void hysteresis(bmp_image ***physicalImage, int height, int width) {
         result[i] = (bmp_image *)calloc(width, sizeof(bmp_image));
     }
 
-    #pragma omp parallel for
 	for (int i = 2; i < height - 2; i++) {
         for (int j = 0; j < width ; j++) {
         	if (img[i][j].Red == WEAK_PIXEL_VALUE && img[i][j].Green == WEAK_PIXEL_VALUE 
@@ -637,17 +714,13 @@ int main(int argc, char *argv[]) {
     bmp_image **image;
     int num_proc, rank;
     int gauss_kernel_size;
-    double** gauss_kernel;
     int num_lines, num_columns;
 
     offsets[0] = offsetof(bmp_image, Green);
     offsets[1] = offsetof(bmp_image, Red);
     offsets[2] = offsetof(bmp_image, Blue);
 
-    omp_set_num_threads(1);
-    if (argc > 1) {
-        omp_set_num_threads(atoi(argv[1]));
-    }
+    num_threads = atoi(argv[1]);
 
     int provided;
     MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
@@ -661,11 +734,11 @@ int main(int argc, char *argv[]) {
         FILE *inputImage = fopen("wp.bmp", "rb");
 
         // Read the image file header and info header.
-        bmp_fileheader *fileHeader = calloc(1,sizeof(bmp_fileheader));
+        fileHeader = calloc(1,sizeof(bmp_fileheader));
         if(fileHeader == NULL){
             exit(ERROR_CODE);
         }
-        bmp_infoheader *infoHeader = calloc(1,sizeof(bmp_infoheader));
+        infoHeader = calloc(1,sizeof(bmp_infoheader));
         if(infoHeader == NULL){
             exit(ERROR_CODE);
         }
@@ -733,7 +806,7 @@ int main(int argc, char *argv[]) {
         printf("Total time: %f\n", (double)(end_time - start_time));
 
         // Write the image.
-        FILE *out = fopen("image_mpi_and_openmp.bmp", "wb");
+        FILE *out = fopen("image_mpi_and_pthreads.bmp", "wb");
         print(out, fileHeader, infoHeader);
         print_physicalImage(image, out, fileHeader, infoHeader);
         fclose(out);
@@ -774,7 +847,7 @@ int main(int argc, char *argv[]) {
 
         // Detect the edge intensity and direction.
         update_padding(&image, num_lines, num_columns, rank,num_proc);
-        bmp_image **theta_image = sobel_filters(&image, num_lines, num_columns);
+        theta_image = sobel_filters(&image, num_lines, num_columns);
 
         // Thin out the edges.
         update_padding(&image, num_lines, num_columns, rank,num_proc);
