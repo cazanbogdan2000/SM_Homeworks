@@ -185,9 +185,16 @@ void print_physicalImage(bmp_image **physicalImage, FILE *out, bmp_fileheader *f
             green = physicalImage[i][j].Green;
             red = physicalImage[i][j].Red;
 
-            fwrite(&blue, sizeof(unsigned char), 1, out);
-            fwrite(&green, sizeof(unsigned char), 1, out);
-            fwrite(&red, sizeof(unsigned char), 1, out);
+            if (i <= 3 || i >= infoHeader->height - 4 || j <= 2 || j >= infoHeader->width - 2) {
+            	unsigned char zero = 0;
+            	fwrite(&zero, sizeof(unsigned char), 1, out);
+            	fwrite(&zero, sizeof(unsigned char), 1, out);
+            	fwrite(&zero, sizeof(unsigned char), 1, out);
+            } else {
+            	fwrite(&blue, sizeof(unsigned char), 1, out);
+            	fwrite(&green, sizeof(unsigned char), 1, out);
+            	fwrite(&red, sizeof(unsigned char), 1, out);
+            }
         }
 
         fwrite(&padding, sizeof(unsigned char), infoHeader->width % 4, out);
